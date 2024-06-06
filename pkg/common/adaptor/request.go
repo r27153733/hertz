@@ -18,7 +18,11 @@ package adaptor
 
 import (
 	"bytes"
+	"github.com/cloudwego/hertz/pkg/protocol/consts"
+	"github.com/cloudwego/hertz/pkg/route"
+	"io"
 	"net/http"
+	"strconv"
 
 	"github.com/cloudwego/hertz/pkg/protocol"
 )
@@ -52,6 +56,55 @@ func CopyToHertzRequest(req *http.Request, hreq *protocol.Request) error {
 	}
 	if req.Body != nil {
 		hreq.SetBodyStream(req.Body, hreq.Header.ContentLength())
+	}
+	return nil
+}
+
+func CopyToHertzRequestUseEngineConf(engine *route.Engine, req *http.Request, hreq *protocol.Request) error {
+	hreq.Header.InitContentLengthWithValue(-2)
+	hreq.Header.SetRequestURI(req.RequestURI)
+	hreq.Header.SetHost(req.Host)
+	hreq.Header.SetMethod(req.Method)
+	hreq.Header.SetProtocol(req.Proto)
+
+	for k, v := range req.Header {
+		for _, vv := range v {
+			hreq.Header.Add(k, vv)
+
+			switch k {
+			case consts.HeaderContentLength:
+				if hreq.Header.ContentLength() != -1 {
+					if contentLength, err := strconv.Atoi(vv); err != nil {
+						return err
+					} else {
+						hreq.Header.InitContentLengthWithValue(contentLength)
+						hreq.Header.SetContentLengthBytes([]byte(vv))
+					}
+				}
+			case consts.HeaderTransferEncoding:
+				if vv != consts.HeaderTrailer {
+					hreq.Header.SetContentLength(-1)
+				}
+
+			}
+		}
+	}
+
+	if req.Body != nil {
+		if engine.IsStreamRequestBody() || hreq.Header.ContentLength() == -1 {
+			hreq.SetBodyStream(req.Body, -1)
+		} else if hreq.Header.ContentLength() == -2 {
+			if engine.IsStreamRequestBody() {
+				hreq.Header.IgnoreBody()
+				hreq.Header.SetContentLength(0)
+			}
+		} else {
+			buf, err := io.ReadAll(&io.LimitedReader{R: req.Body, N: int64(hreq.Header.ContentLength())})
+			hreq.SetBody(buf)
+			if err != nil && err != io.EOF {
+				panic(err)
+			}
+		}
 	}
 	return nil
 }
