@@ -17,7 +17,13 @@
 package adaptor
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"github.com/cloudwego/hertz/pkg/common/config"
+	"github.com/cloudwego/hertz/pkg/common/utils"
+	"github.com/cloudwego/hertz/pkg/route"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -174,4 +180,122 @@ func TestCopyToHertzRequest(t *testing.T) {
 	assert.DeepEqual(t, req.Header.Values("key2"), valueSlice)
 
 	assert.DeepEqual(t, 3, hertzReq.Header.Len())
+}
+
+func TestCopyToHertzRequestUseEngineConf(t *testing.T) {
+	// Create an HTTP POST request with a body
+	b := []byte("key1=value1&key2=value2")
+	body := bytes.NewReader(b)
+	req := http.Request{
+		Method:     "POST",
+		RequestURI: "/testpost",
+		URL: &url.URL{
+			Scheme: "http",
+			Host:   "test.com",
+		},
+		Proto: "HTTP/1.1",
+		Header: http.Header{
+			"Content-Type":   []string{"application/x-www-form-urlencoded"},
+			"Content-Length": []string{fmt.Sprintf("%d", len(b))},
+		},
+		Body: io.NopCloser(body),
+	}
+
+	// Create a new Hertz request object
+	hertzReq := protocol.Request{}
+
+	// Use your existing function to copy details from the HTTP request to the Hertz request
+	err := CopyToHertzRequestUseEngineConf(route.NewEngine(config.NewOptions([]config.Option{})), &req, &hertzReq)
+	assert.Nil(t, err)
+
+	// Assertions to check method, URI, and protocol
+	assert.DeepEqual(t, req.Method, string(hertzReq.Method()))
+	assert.DeepEqual(t, req.RequestURI, string(hertzReq.Path()))
+	assert.DeepEqual(t, req.Proto, hertzReq.Header.GetProtocol())
+
+	// Check headers
+	assert.DeepEqual(t, req.Header.Get("Content-Type"), hertzReq.Header.Get("Content-Type"))
+
+	// Read and check the body of the Hertz request
+	assert.DeepEqual(t, string(b), string(hertzReq.Body()))
+
+	// Check total headers length including automatically added headers
+	assert.DeepEqual(t, len(req.Header), hertzReq.Header.Len()) // +1 for any headers Hertz might automatically add
+}
+
+func TestCopyToHertzRequestUseEngineConfStreamBody(t *testing.T) {
+	// Create an HTTP POST request with a body
+	b := []byte("key1=value1&key2=value2")
+	body := bytes.NewReader(b)
+	req := http.Request{
+		Method:     "POST",
+		RequestURI: "/testpost",
+		URL: &url.URL{
+			Scheme: "http",
+			Host:   "test.com",
+		},
+		Proto: "HTTP/1.1",
+		Header: http.Header{
+			"Content-Type": []string{"application/x-www-form-urlencoded"},
+		},
+		Body: io.NopCloser(body),
+	}
+
+	// Create a new Hertz request object
+	hertzReq := protocol.Request{}
+
+	// Use your existing function to copy details from the HTTP request to the Hertz request
+	err := CopyToHertzRequestUseEngineConf(route.NewEngine(config.NewOptions([]config.Option{
+		server.WithStreamBody(true),
+	})), &req, &hertzReq)
+	assert.Nil(t, err)
+
+	// Assertions to check method, URI, and protocol
+	assert.DeepEqual(t, req.Method, string(hertzReq.Method()))
+	assert.DeepEqual(t, req.RequestURI, string(hertzReq.Path()))
+	assert.DeepEqual(t, req.Proto, hertzReq.Header.GetProtocol())
+
+	// Check headers
+	assert.DeepEqual(t, req.Header.Get("Content-Type"), hertzReq.Header.Get("Content-Type"))
+
+	// Read and check the body of the Hertz request
+	hertzBody, _ := io.ReadAll(hertzReq.BodyStream())
+	assert.DeepEqual(t, string(b), string(hertzBody))
+
+	// Check total headers length including automatically added headers
+	assert.DeepEqual(t, len(req.Header)+1, hertzReq.Header.Len()) // +1 for any headers Hertz might automatically add
+}
+
+func TestProxy(t *testing.T) {
+	h := server.Default(server.WithHostPorts("127.0.0.1:1145"))
+	h.GET("/ping", func(c context.Context, ctx *app.RequestContext) {
+		ctx.JSON(consts.StatusOK, utils.H{"message": "pong"})
+	})
+
+	http.HandleFunc("/ping", func(writer http.ResponseWriter, request *http.Request) {
+		c := newHertzContext(h.Engine)
+		err := CopyToHertzRequestUseEngineConf(h.Engine, request, &c.Request)
+		assert.Nil(t, err)
+		h.Engine.ServeHTTP(request.Context(), c)
+		CopyToStdResponseUseEngineConf(&c.Response, writer)
+	})
+
+	go func() {
+		err := http.ListenAndServe("127.0.0.1:14191", nil)
+		assert.Nil(t, err)
+	}()
+	go h.Spin()
+	time.Sleep(100 * time.Millisecond)
+	resp, err := http.Get("http://127.0.0.1:14191/ping")
+	assert.Nil(t, err)
+	all, err := io.ReadAll(resp.Body)
+	assert.Nil(t, err)
+	assert.DeepEqual(t, "{\"message\":\"pong\"}", string(all))
+}
+
+func newHertzContext(engine *route.Engine) *app.RequestContext {
+	ctx := engine.NewContext()
+	ctx.Request.SetMaxKeepBodySize(engine.GetOptions().MaxKeepBodySize)
+	ctx.Response.SetMaxKeepBodySize(engine.GetOptions().MaxKeepBodySize)
+	return ctx
 }
