@@ -18,6 +18,7 @@ package adaptor
 
 import (
 	"bytes"
+	"github.com/cloudwego/hertz/pkg/common/config"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
 	"github.com/cloudwego/hertz/pkg/route"
 	"io"
@@ -45,19 +46,8 @@ func GetCompatRequest(req *protocol.Request) (*http.Request, error) {
 
 // CopyToHertzRequest copy uri, host, method, protocol, header, but share body reader from http.Request to protocol.Request.
 func CopyToHertzRequest(req *http.Request, hreq *protocol.Request) error {
-	hreq.Header.SetRequestURI(req.RequestURI)
-	hreq.Header.SetHost(req.Host)
-	hreq.Header.SetMethod(req.Method)
-	hreq.Header.SetProtocol(req.Proto)
-	for k, v := range req.Header {
-		for _, vv := range v {
-			hreq.Header.Add(k, vv)
-		}
-	}
-	if req.Body != nil {
-		hreq.SetBodyStream(req.Body, hreq.Header.ContentLength())
-	}
-	return nil
+	engine := route.NewEngine(config.NewOptions([]config.Option{}))
+	return CopyToHertzRequestUseEngineConf(engine, req, hreq)
 }
 
 func CopyToHertzRequestUseEngineConf(engine *route.Engine, req *http.Request, hreq *protocol.Request) error {
