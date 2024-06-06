@@ -84,8 +84,13 @@ func CopyToHertzRequestUseEngineConf(engine *route.Engine, req *http.Request, hr
 		if engine.IsStreamRequestBody() || hreq.Header.ContentLength() == -1 {
 			hreq.SetBodyStream(req.Body, -1)
 		} else if hreq.Header.ContentLength() == -2 {
-			if engine.IsStreamRequestBody() {
-				hreq.Header.IgnoreBody()
+			// identity body has no sense for http requests, since
+			// the end of body is determined by connection close.
+			// So just ignore request body for requests without
+			// 'Content-Length' and 'Transfer-Encoding' headers.
+
+			// refer to https://tools.ietf.org/html/rfc7230#section-3.3.2
+			if !hreq.Header.IgnoreBody() {
 				hreq.Header.SetContentLength(0)
 			}
 		} else {
