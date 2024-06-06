@@ -17,10 +17,9 @@
 package adaptor
 
 import (
-	"net/http"
-
 	"github.com/cloudwego/hertz/pkg/protocol"
 	"github.com/cloudwego/hertz/pkg/protocol/consts"
+	"net/http"
 )
 
 type compatResponse struct {
@@ -87,4 +86,14 @@ func GetCompatResponseWriter(resp *protocol.Response) http.ResponseWriter {
 
 	c.header = h
 	return c
+}
+
+func CopyToStdResponseUseEngineConf(hresp *protocol.Response, respWriter http.ResponseWriter) {
+	hresp.Header.VisitAll(func(key, value []byte) {
+		respWriter.Header().Add(
+			string(key), string(value),
+		)
+	})
+	respWriter.WriteHeader(hresp.StatusCode())
+	_, _ = respWriter.Write(hresp.Body())
 }
